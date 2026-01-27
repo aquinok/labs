@@ -1,125 +1,131 @@
+# =========================
+# Labs repo Makefile
+# Terraform + Ansible automation
+# =========================
+
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-# Pick env + region when you run make:
-#   make up ENV=lab REGION=us-east-1
+# ---- Repo paths (relative to repo root) ----
+TF_ENV_DIR ?= terraform/envs/lab/us-east-1
+TF_BOOTSTRAP_DIR ?= terraform/bootstrap
+ANSIBLE_DIR ?= ansible
+INV_GEN_SCRIPT ?= scripts/generate-inventory.sh
+CIS_RUNNER ?= $(ANSIBLE_DIR)/run-cis-lab.sh
+
+# ---- Common knobs ----
 ENV ?= lab
 REGION ?= us-east-1
 
-TF_BOOTSTRAP_DIR := terraform/bootstrap
-TF_ENV_DIR := terraform/envs/$(ENV)/$(REGION)
-TF_STATE_KEY := envs/$(ENV)/$(REGION)/terraform.tfstate
+# SSH key used by generated inventory (can override)
+SSH_KEY ?= $(HOME)/.ssh/id_rsa
 
-ANSIBLE_DIR := ansible
-ANSIBLE_INV ?= inventories/$(ENV)/hosts.yml
-ANSIBLE_PB  ?= playbooks/ubuntu24-cis.yml
-ANSIBLE_TAGS ?= level1-server
+# Optional: backend config file path for terraform init (if you use one)
+# Example usage:
+#   make tf-init BACKEND_CONFIG=backend.hcl
+BACKEND_CONFIG ?=
 
-BACKEND_ENV := .backend.env
+# ---- Utilities ----
+define _tf_cmd
+	cd "$(TF_ENV_DIR)" && terraform $(1)
+endef
 
-.PHONY: help bootstrap up cis down nuke backend-info
+define _tf_bootstrap_cmd
+	cd "$(TF_BOOTSTRAP_DIR)" && terraform $(1)
+endef
 
-help:
+# =========================
+# Help
+# =========================
+.PHONY: help
+help: ## Show this help (targets + descriptions)
+	@echo ""
+	@echo "Labs automation (Terraform + Ansible)"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make <target> [ENV=lab] [REGION=us-east-1] [TF_ENV_DIR=...] [SSH_KEY=...]"
+	@echo ""
+	@echo "Key paths:"
+	@echo "  TF_ENV_DIR        = $(TF_ENV_DIR)"
+	@echo "  TF_BOOTSTRAP_DIR  = $(TF_BOOTSTRAP_DIR)"
+	@echo "  INV_GEN_SCRIPT    = $(INV_GEN_SCRIPT)"
+	@echo "  CIS_RUNNER        = $(CIS_RUNNER)"
 	@echo ""
 	@echo "Targets:"
-	@echo "  make bootstrap"
-	@echo "      Create S3 backend + DynamoDB lock (one-time, local state)"
-	@echo ""
-	@echo "  make up ENV=lab REGION=us-east-1"
-	@echo "      Terraform apply for env/region using remote S3 backend"
-	@echo ""
-	@echo "  make cis ENV=lab"
-	@echo "      Generate inventory from Terraform outputs and run CIS hardening"
-	@echo ""
-	@echo "  make down ENV=lab REGION=us-east-1"
-	@echo "      Terraform destroy for env/region (leaves backend intact)"
-	@echo ""
-	@echo "  make nuke"
-	@echo "      Destroy env AND backend:"
-	@echo "        - terraform destroy (env)"
-	@echo "        - terraform destroy (bootstrap)"
-	@echo "        - force-purge all S3 state versions"
-	@echo "        - delete S3 bucket and DynamoDB lock table"
-	@echo ""
-	@echo "Optional:"
-	@echo "  make purge-backend"
-	@echo "      Force-delete all object versions and delete markers in tfstate bucket"
-	@echo ""
-	@echo "Defaults:"
-	@echo "  ENV    = lab"
-	@echo "  REGION = us-east-1"
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST) | sort
 	@echo ""
 
-bootstrap:
-	@set -euo pipefail; \
-	cd "$(TF_BOOTSTRAP_DIR)"; \
-	terraform init; \
-	terraform apply -auto-approve; \
-	cd - >/dev/null; \
-	./scripts/save_backend_env.sh "$(TF_BOOTSTRAP_DIR)" ".backend.env"
+# =========================
+# Terraform (bootstrap)
+# =========================
+.PHONY: bootstrap-init
+bootstrap-init: ## Terraform init in terraform/bootstrap
+	@$(call _tf_bootstrap_cmd,init)
 
-backend-info:
-	@set -euo pipefail; \
-	cd "$(TF_BOOTSTRAP_DIR)"; \
-	terraform output
+.PHONY: bootstrap-apply
+bootstrap-apply: ## Terraform apply in terraform/bootstrap (state bucket/lock, etc.)
+	@$(call _tf_bootstrap_cmd,apply)
 
-# Terraform init configured at runtime using outputs from bootstrap
-up:
-	@set -euo pipefail; \
-	test -f "$(BACKEND_ENV)" || (echo "Missing $(BACKEND_ENV). Run: make bootstrap" && exit 1); \
-	source "$(BACKEND_ENV)"; \
-	echo "Using backend bucket=$$BACKEND_BUCKET region=$$BACKEND_REGION key=$(TF_STATE_KEY)"; \
-	cd "$(TF_ENV_DIR)"; \
-	terraform init -reconfigure \
-	  -backend-config="bucket=$$BACKEND_BUCKET" \
-	  -backend-config="region=$$BACKEND_REGION" \
-	  -backend-config="key=$(TF_STATE_KEY)" \
-	  -backend-config="encrypt=true" \
-	  -backend-config="use_lockfile=true"; \
-	terraform apply -auto-approve
+.PHONY: bootstrap-destroy
+bootstrap-destroy: ## Terraform destroy in terraform/bootstrap
+	@$(call _tf_bootstrap_cmd,destroy)
 
-down:
-	@set -euo pipefail; \
-	test -f "$(BACKEND_ENV)" || (echo "Missing $(BACKEND_ENV). If backend already nuked, skip down." && exit 1); \
-	source "$(BACKEND_ENV)"; \
-	cd "$(TF_ENV_DIR)"; \
-	terraform init -reconfigure \
-	  -backend-config="bucket=$$BACKEND_BUCKET" \
-	  -backend-config="region=$$BACKEND_REGION" \
-	  -backend-config="key=$(TF_STATE_KEY)" \
-	  -backend-config="encrypt=true" \
-	  -backend-config="use_lockfile=true"; \
-	terraform destroy -auto-approve
-
-cis:
-	@set -euo pipefail; \
-	cd "$(ANSIBLE_DIR)"; \
-	./run-cis-lab.sh --tags "$(ANSIBLE_TAGS)"
-
-purge-backend:
-	@set -euo pipefail; \
-	cd "$(TF_BOOTSTRAP_DIR)"; \
-	B="$$(terraform output -raw backend_bucket_name)"; \
-	cd - >/dev/null; \
-	./scripts/purge_tfstate_bucket.sh "$$B"; \
-	aws s3 rb "s3://$$B"
-
-# WARNING: nuke removes backend infra too (S3 bucket + DDB lock table)
-nuke:
-	@set -euo pipefail; \
-	if test -f "$(BACKEND_ENV)"; then \
-	  source "$(BACKEND_ENV)"; \
+# =========================
+# Terraform (env)
+# =========================
+.PHONY: tf-init
+tf-init: ## Terraform init in TF_ENV_DIR (optionally BACKEND_CONFIG=backend.hcl)
+	@if [[ -n "$(BACKEND_CONFIG)" ]]; then \
+		(cd "$(TF_ENV_DIR)" && terraform init -backend-config="$(BACKEND_CONFIG)"); \
 	else \
-	  echo "No $(BACKEND_ENV) found. If env is already gone, continuing..."; \
-	  BACKEND_BUCKET=""; \
-	fi; \
-	$(MAKE) down || true; \
-	echo "Destroying bootstrap..."; \
-	cd "$(TF_BOOTSTRAP_DIR)" && terraform destroy -auto-approve || true; \
-	if [[ -n "$$BACKEND_BUCKET" ]]; then \
-	  echo "Forcing purge + delete of versioned tfstate bucket $$BACKEND_BUCKET"; \
-	  cd - >/dev/null; \
-	  ./scripts/purge_tfstate_bucket.sh "$$BACKEND_BUCKET" || true; \
-	  aws s3 rb "s3://$$BACKEND_BUCKET" || true; \
-	fi; \
-	rm -f "$(BACKEND_ENV)" || true
+		$(call _tf_cmd,init); \
+	fi
+
+.PHONY: plan
+plan: ## Terraform plan in TF_ENV_DIR
+	@$(call _tf_cmd,plan)
+
+.PHONY: up
+up: ## Terraform apply in TF_ENV_DIR (bring lab up)
+	@$(call _tf_cmd,apply)
+
+.PHONY: down
+down: ## Terraform destroy in TF_ENV_DIR (tear lab down)
+	@$(call _tf_cmd,destroy)
+
+.PHONY: output
+output: ## Terraform output in TF_ENV_DIR
+	@$(call _tf_cmd,output)
+
+# =========================
+# Inventory generation (NEW)
+# =========================
+.PHONY: inventory
+inventory: ## Generate ansible inventory from Terraform output (writes ansible/inventories/lab/hosts.yml)
+	@TF_DIR="$(TF_ENV_DIR)" SSH_KEY="$(SSH_KEY)" "$(INV_GEN_SCRIPT)"
+
+# =========================
+# Ansible / CIS
+# =========================
+.PHONY: cis
+cis: inventory ## Run CIS lockdown playbook (auto-generates inventory first)
+	@TF_DIR="$(TF_ENV_DIR)" "$(CIS_RUNNER)"
+
+# =========================
+# Quality-of-life helpers
+# =========================
+.PHONY: clean-inventory
+clean-inventory: ## Remove generated inventory file (ansible/inventories/lab/hosts.yml)
+	@rm -f "$(ANSIBLE_DIR)/inventories/$(ENV)/hosts.yml"
+	@echo "✔ Removed $(ANSIBLE_DIR)/inventories/$(ENV)/hosts.yml"
+
+.PHONY: show-vars
+show-vars: ## Print the resolved variables this Makefile is using
+	@echo "ENV              = $(ENV)"
+	@echo "REGION           = $(REGION)"
+	@echo "TF_ENV_DIR       = $(TF_ENV_DIR)"
+	@echo "TF_BOOTSTRAP_DIR = $(TF_BOOTSTRAP_DIR)"
+	@echo "SSH_KEY          = $(SSH_KEY)"
+	@echo "BACKEND_CONFIG   = $(BACKEND_CONFIG)"
+	@echo "INV_GEN_SCRIPT   = $(INV_GEN_SCRIPT)"
+	@echo "CIS_RUNNER       = $(CIS_RUNNER)"

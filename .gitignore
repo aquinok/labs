@@ -11,6 +11,7 @@
 **/roles/
 **/.ansible/
 **/*.retry
+ansible/inventories/**/hosts.yml
 
 # AWS
 aws/*
