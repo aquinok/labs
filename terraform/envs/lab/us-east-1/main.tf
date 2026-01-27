@@ -23,10 +23,10 @@ module "ec2" {
   vpc_security_group_ids = [module.sg.ssh_sg_id]
   public_key             = file(pathexpand(var.public_key_path))
 
-  user_data = templatefile("${path.module}/user_data.yaml.tftpl", {
-    ubuntu_password_hash = local.ubuntu_password_hash
-    ssh_public_key       = chomp(file(pathexpand(var.public_key_path)))
-  })
+user_data = templatefile("${path.module}/user_data.yaml.tftpl", {
+  ubuntu_password = random_password.ubuntu.result
+  ssh_public_key  = chomp(file(pathexpand(var.public_key_path)))
+})
 
   tags = var.tags
 }
