@@ -57,3 +57,19 @@ resource "aws_dynamodb_table" "tflock" {
   })
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    noncurrent_version_expiration {
+      noncurrent_days = 3
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+}

@@ -15,27 +15,48 @@ ANSIBLE_INV ?= inventories/$(ENV)/hosts.yml
 ANSIBLE_PB  ?= playbooks/ubuntu24-cis.yml
 ANSIBLE_TAGS ?= level1-server
 
+BACKEND_ENV := .backend.env
+
 .PHONY: help bootstrap up cis down nuke backend-info
 
 help:
 	@echo ""
 	@echo "Targets:"
-	@echo "  make bootstrap                Create S3 backend + DynamoDB lock (one-time)"
-	@echo "  make up ENV=lab REGION=us-east-1    Terraform apply for env/region"
-	@echo "  make cis ENV=lab              Run CIS playbook using run-cis-lab.sh"
-	@echo "  make down ENV=lab REGION=us-east-1  Terraform destroy for env/region"
-	@echo "  make nuke                     Destroy env (default lab/us-east-1) + backend"
+	@echo "  make bootstrap"
+	@echo "      Create S3 backend + DynamoDB lock (one-time, local state)"
 	@echo ""
-	@echo "Notes:"
-	@echo "  - Backend key is: $(TF_STATE_KEY)"
-	@echo "  - ENV defaults to 'lab', REGION defaults to 'us-east-1'"
+	@echo "  make up ENV=lab REGION=us-east-1"
+	@echo "      Terraform apply for env/region using remote S3 backend"
+	@echo ""
+	@echo "  make cis ENV=lab"
+	@echo "      Generate inventory from Terraform outputs and run CIS hardening"
+	@echo ""
+	@echo "  make down ENV=lab REGION=us-east-1"
+	@echo "      Terraform destroy for env/region (leaves backend intact)"
+	@echo ""
+	@echo "  make nuke"
+	@echo "      Destroy env AND backend:"
+	@echo "        - terraform destroy (env)"
+	@echo "        - terraform destroy (bootstrap)"
+	@echo "        - force-purge all S3 state versions"
+	@echo "        - delete S3 bucket and DynamoDB lock table"
+	@echo ""
+	@echo "Optional:"
+	@echo "  make purge-backend"
+	@echo "      Force-delete all object versions and delete markers in tfstate bucket"
+	@echo ""
+	@echo "Defaults:"
+	@echo "  ENV    = lab"
+	@echo "  REGION = us-east-1"
 	@echo ""
 
 bootstrap:
 	@set -euo pipefail; \
 	cd "$(TF_BOOTSTRAP_DIR)"; \
 	terraform init; \
-	terraform apply -auto-approve
+	terraform apply -auto-approve; \
+	cd - >/dev/null; \
+	./scripts/save_backend_env.sh "$(TF_BOOTSTRAP_DIR)" ".backend.env"
 
 backend-info:
 	@set -euo pipefail; \
@@ -45,35 +66,29 @@ backend-info:
 # Terraform init configured at runtime using outputs from bootstrap
 up:
 	@set -euo pipefail; \
-	cd "$(TF_BOOTSTRAP_DIR)"; \
-	B="$$(terraform output -raw backend_bucket_name)"; \
-	T="$$(terraform output -raw backend_dynamodb_table)"; \
-	R="$$(terraform output -raw backend_region)"; \
-	echo "Using backend bucket=$$B table=$$T region=$$R key=$(TF_STATE_KEY)"; \
-	cd - >/dev/null; \
+	test -f "$(BACKEND_ENV)" || (echo "Missing $(BACKEND_ENV). Run: make bootstrap" && exit 1); \
+	source "$(BACKEND_ENV)"; \
+	echo "Using backend bucket=$$BACKEND_BUCKET region=$$BACKEND_REGION key=$(TF_STATE_KEY)"; \
 	cd "$(TF_ENV_DIR)"; \
 	terraform init -reconfigure \
-	  -backend-config="bucket=$$B" \
-	  -backend-config="dynamodb_table=$$T" \
-	  -backend-config="region=$$R" \
+	  -backend-config="bucket=$$BACKEND_BUCKET" \
+	  -backend-config="region=$$BACKEND_REGION" \
 	  -backend-config="key=$(TF_STATE_KEY)" \
-	  -backend-config="encrypt=true"; \
+	  -backend-config="encrypt=true" \
+	  -backend-config="use_lockfile=true"; \
 	terraform apply -auto-approve
 
 down:
 	@set -euo pipefail; \
-	cd "$(TF_BOOTSTRAP_DIR)"; \
-	B="$$(terraform output -raw backend_bucket_name)"; \
-	T="$$(terraform output -raw backend_dynamodb_table)"; \
-	R="$$(terraform output -raw backend_region)"; \
-	cd - >/dev/null; \
+	test -f "$(BACKEND_ENV)" || (echo "Missing $(BACKEND_ENV). If backend already nuked, skip down." && exit 1); \
+	source "$(BACKEND_ENV)"; \
 	cd "$(TF_ENV_DIR)"; \
 	terraform init -reconfigure \
-	  -backend-config="bucket=$$B" \
-	  -backend-config="dynamodb_table=$$T" \
-	  -backend-config="region=$$R" \
+	  -backend-config="bucket=$$BACKEND_BUCKET" \
+	  -backend-config="region=$$BACKEND_REGION" \
 	  -backend-config="key=$(TF_STATE_KEY)" \
-	  -backend-config="encrypt=true"; \
+	  -backend-config="encrypt=true" \
+	  -backend-config="use_lockfile=true"; \
 	terraform destroy -auto-approve
 
 cis:
@@ -81,8 +96,30 @@ cis:
 	cd "$(ANSIBLE_DIR)"; \
 	./run-cis-lab.sh --tags "$(ANSIBLE_TAGS)"
 
-# WARNING: nuke removes backend infra too (S3 bucket + DDB lock table)
-nuke: down
+purge-backend:
 	@set -euo pipefail; \
 	cd "$(TF_BOOTSTRAP_DIR)"; \
-	terraform destroy -auto-approve
+	B="$$(terraform output -raw backend_bucket_name)"; \
+	cd - >/dev/null; \
+	./scripts/purge_tfstate_bucket.sh "$$B"; \
+	aws s3 rb "s3://$$B"
+
+# WARNING: nuke removes backend infra too (S3 bucket + DDB lock table)
+nuke:
+	@set -euo pipefail; \
+	if test -f "$(BACKEND_ENV)"; then \
+	  source "$(BACKEND_ENV)"; \
+	else \
+	  echo "No $(BACKEND_ENV) found. If env is already gone, continuing..."; \
+	  BACKEND_BUCKET=""; \
+	fi; \
+	$(MAKE) down || true; \
+	echo "Destroying bootstrap..."; \
+	cd "$(TF_BOOTSTRAP_DIR)" && terraform destroy -auto-approve || true; \
+	if [[ -n "$$BACKEND_BUCKET" ]]; then \
+	  echo "Forcing purge + delete of versioned tfstate bucket $$BACKEND_BUCKET"; \
+	  cd - >/dev/null; \
+	  ./scripts/purge_tfstate_bucket.sh "$$BACKEND_BUCKET" || true; \
+	  aws s3 rb "s3://$$BACKEND_BUCKET" || true; \
+	fi; \
+	rm -f "$(BACKEND_ENV)" || true
