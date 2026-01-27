@@ -28,6 +28,7 @@ resource "aws_key_pair" "this" {
 }
 
 resource "aws_instance" "this" {
+  count                       = var.node_count
   ami                         = data.aws_ami.ubuntu_2404.id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
@@ -39,6 +40,6 @@ resource "aws_instance" "this" {
   iam_instance_profile        = var.iam_instance_profile
 
   tags = merge(var.tags, {
-    Name = "${var.name}-ubuntu-2404"
+    Name = format("%s-%02d", var.name, count.index + 1)
   })
 }

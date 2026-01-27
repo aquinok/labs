@@ -18,6 +18,7 @@ module "sg" {
 module "ec2" {
   source                 = "../../../modules/ec2"
   name                   = var.name
+  node_count             = var.node_count
   instance_type          = "t3.micro"
   subnet_id              = module.vpc.public_subnet_id
   vpc_security_group_ids = [module.sg.ssh_sg_id]

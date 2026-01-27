@@ -37,3 +37,8 @@ variable "iam_instance_profile" {
   description = "Optional instance profile name to attach to the instance"
   default     = null
 }
+
+variable "node_count" {
+  type    = number
+  default = 1
+}

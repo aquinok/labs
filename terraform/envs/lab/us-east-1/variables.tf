@@ -33,3 +33,8 @@ variable "tags" {
     Env     = "lab"
   }
 }
+
+variable "node_count" {
+  type    = number
+  default = 1
+}

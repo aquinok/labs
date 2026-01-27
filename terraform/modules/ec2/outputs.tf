@@ -1,17 +1,17 @@
-output "instance_id" {
-  value = aws_instance.this.id
-}
-
-output "public_ip" {
-  value = aws_instance.this.public_ip
+output "public_ips" {
+  value = [for i in aws_instance.this : i.public_ip]
 }
 
 output "public_dns" {
-  value = aws_instance.this.public_dns
+  value = [for i in aws_instance.this : i.public_dns]
 }
 
-output "ami_id" {
-  value = aws_instance.this.ami
+output "instance_ids" {
+  value = [for i in aws_instance.this : i.id]
+}
+
+output "names" {
+  value = [for i in aws_instance.this : i.tags["Name"]]
 }
 
 output "key_name" {
