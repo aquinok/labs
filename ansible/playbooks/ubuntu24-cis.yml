@@ -1,0 +1,11 @@
+---
+- name: CIS harden Ubuntu 24.04
+  hosts: all
+  become: true
+  vars_files:
+    - ../group_vars/all/ubuntu24_cis.yml
+
+  roles:
+    - role: ansible-lockdown.ubuntu24_cis
+      tags:
+        - level1-server

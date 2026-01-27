@@ -1,0 +1,9 @@
+# Start conservative: level 1 server first.
+# The project supports CIS levels via tags. :contentReference[oaicite:3]{index=3}
+
+# Keep SSH access sane (exact variable names differ by role version;
+# we’ll validate against the role defaults once installed).
+ubuntu24cis_sshd_allowusers: ["ubuntu"]
+ubuntu24cis_sshd_permitrootlogin: "no"
+ubuntu24cis_sshd_passwordauthentication: "no"
+ubuntu24cis_sshd_pubkeyauthentication: "yes"

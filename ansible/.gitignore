@@ -1,0 +1,49 @@
+# -----------------------------
+# Ansible Galaxy deps (don't commit)
+# -----------------------------
+roles/
+collections/
+
+# If you keep deps in alternate locations
+.ansible/
+.ansible_cache/
+ansible_collections/
+
+# -----------------------------
+# Runtime artifacts
+# -----------------------------
+*.retry
+*.log
+
+# Fact cache (if enabled)
+facts/
+.fact_cache/
+cache/
+
+# Temporary / editor
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# -----------------------------
+# Secrets (never commit)
+# -----------------------------
+**/*vault*
+**/*.vault
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+
+# If you store local-only group_vars/host_vars secrets
+group_vars/*/secrets.yml
+group_vars/*/secrets.yaml
+host_vars/*/secrets.yml
+host_vars/*/secrets.yaml
+
+# If you use .env files
+.env
+.env.*

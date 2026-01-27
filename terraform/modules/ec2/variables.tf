@@ -31,3 +31,9 @@ variable "user_data" {
   description = "Cloud-init user_data"
   default     = null
 }
+
+variable "iam_instance_profile" {
+  type        = string
+  description = "Optional instance profile name to attach to the instance"
+  default     = null
+}

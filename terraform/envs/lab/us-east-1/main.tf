@@ -22,12 +22,11 @@ module "ec2" {
   subnet_id              = module.vpc.public_subnet_id
   vpc_security_group_ids = [module.sg.ssh_sg_id]
   public_key             = file(pathexpand(var.public_key_path))
-  tags                   = var.tags
-  user_data = <<-EOF
-    #!/bin/bash
-    set -e
-    apt-get update -y
-    apt-get install -y unzip jq
-  EOF
-}
 
+  user_data = templatefile("${path.module}/user_data.yaml.tftpl", {
+    ubuntu_password_hash = local.ubuntu_password_hash
+    ssh_public_key       = chomp(file(pathexpand(var.public_key_path)))
+  })
+
+  tags = var.tags
+}

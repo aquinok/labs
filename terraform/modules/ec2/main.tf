@@ -19,7 +19,7 @@ data "aws_ami" "ubuntu_2404" {
 }
 
 resource "aws_key_pair" "this" {
-  key_name   = "${var.name}-key"
+  key_name   = "${var.name}-"
   public_key = var.public_key
 
   tags = merge(var.tags, {
@@ -28,13 +28,15 @@ resource "aws_key_pair" "this" {
 }
 
 resource "aws_instance" "this" {
-  ami                    = data.aws_ami.ubuntu_2404.id
-  instance_type          = var.instance_type
-  subnet_id              = var.subnet_id
-  vpc_security_group_ids = var.vpc_security_group_ids
-  key_name               = aws_key_pair.this.key_name
+  ami                         = data.aws_ami.ubuntu_2404.id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_id
+  vpc_security_group_ids      = var.vpc_security_group_ids
+  key_name                    = aws_key_pair.this.key_name
   
-  user_data              = var.user_data
+  user_data                   = var.user_data
+  user_data_replace_on_change = true
+  iam_instance_profile        = var.iam_instance_profile
 
   tags = merge(var.tags, {
     Name = "${var.name}-ubuntu-2404"
