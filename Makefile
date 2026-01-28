@@ -54,11 +54,18 @@ backend: ## Generate backend.hcl from bootstrap outputs
 	key="labs/$(ENV)/$(REGION)/terraform.tfstate"; \
 	printf "bucket = \"%s\"\ndynamodb_table = \"%s\"\nregion = \"%s\"\nkey = \"%s\"\nencrypt = true\n" \
 		"$$bucket" "$$table" "$$region" "$$key" > "$(BACKEND_HCL)"
-	@echo "✔ Wrote $(BACKEND_HCL)"
+	@echo "[+] Wrote $(BACKEND_HCL)"
 
 .PHONY: tf-init
-tf-init: backend ## Terraform init (env)
-	@cd "$(TF_ENV_DIR)" && terraform init -reconfigure -backend-config="backend.hcl"
+tf-init: backend ## Terraform init (env) only if needed
+	@cd "$(TF_ENV_DIR)" && { \
+		if [[ -d ".terraform" && -f ".terraform/environment" ]]; then \
+			echo "[+] Terraform already initialized ($(TF_ENV_DIR))"; \
+		else \
+			echo "[+] Terraform initializing ($(TF_ENV_DIR))"; \
+			terraform init -reconfigure -backend-config="backend.hcl"; \
+		fi; \
+	}
 
 .PHONY: plan
 plan: tf-init ## Terraform plan

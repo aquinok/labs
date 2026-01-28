@@ -1,25 +1,25 @@
-output "public_ips" {
-  value = module.ec2.public_ips
-}
-
-output "ssh_commands" {
-  value = [
-    for ip in module.ec2.public_ips :
-    "ssh -i ~/.ssh/id_rsa ubuntu@${ip}"
-  ]
-}
-
-output "instance_public_ips" {
-  value = module.ec2.public_ips
-}
+# ----------------------------
+# Core instance data
+# ----------------------------
 
 output "instance_names" {
-  value = module.ec2.names
+  description = "Names of EC2 instances in the lab"
+  value       = module.ec2.names
 }
 
+output "public_ips" {
+  description = "Public IP addresses of EC2 instances"
+  value       = module.ec2.public_ips
+}
+
+# ----------------------------
+# Convenience outputs (human)
+# ----------------------------
+
 output "ssh_commands_by_name" {
+  description = "SSH commands keyed by instance name"
   value = {
     for idx, ip in module.ec2.public_ips :
-    format("vault-%02d", idx+1) => "ssh -i ~/.ssh/id_rsa ubuntu@${ip}"
+    module.ec2.names[idx] => "ssh -i ~/.ssh/id_rsa ubuntu@${ip}"
   }
 }
