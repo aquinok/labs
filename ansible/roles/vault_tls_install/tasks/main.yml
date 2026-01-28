@@ -1,0 +1,27 @@
+---
+- name: Ensure Vault TLS directory exists
+  become: true
+  file:
+    path: "{{ vault_tls_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0755"
+
+- name: Upload fullchain.pem
+  become: true
+  copy:
+    src: "{{ tls_staging_dir }}/fullchain.pem"
+    dest: "{{ vault_tls_dir }}/fullchain.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0644"
+
+- name: Upload privkey.pem
+  become: true
+  copy:
+    src: "{{ tls_staging_dir }}/privkey.pem"
+    dest: "{{ vault_tls_dir }}/privkey.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: "0600"

@@ -9,8 +9,8 @@
 
 # Ansible deps/artifacts
 **/collections/
-**/roles/
 **/.ansible/
+**/ansible/ansible/
 **/*.retry
 ansible/inventories/**/hosts.yml
 

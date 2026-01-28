@@ -1,0 +1,30 @@
+---
+- name: Apt update
+  become: true
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install zabbix-agent2
+  become: true
+  apt:
+    name: zabbix-agent2
+    state: present
+
+- name: Configure zabbix-agent2
+  become: true
+  lineinfile:
+    path: /etc/zabbix/zabbix_agent2.conf
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - { key: "Server", value: "{{ zabbix_agent_server }}" }
+    - { key: "ServerActive", value: "{{ zabbix_agent_serveractive }}" }
+    - { key: "Hostname", value: "{{ zabbix_agent_hostname }}" }
+
+- name: Restart and enable zabbix-agent2
+  become: true
+  systemd:
+    name: zabbix-agent2
+    enabled: true
+    state: restarted

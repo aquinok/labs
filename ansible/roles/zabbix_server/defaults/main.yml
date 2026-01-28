@@ -1,0 +1,14 @@
+---
+zabbix_compose_dir: /opt/zabbix
+zabbix_web_port: 80
+
+# Zabbix container versions
+zabbix_version: "6.4"
+zabbix_db_user: zabbix
+zabbix_db_pass: zabbix
+zabbix_db_name: zabbix
+
+# These should be provided by inventory/group_vars or env
+# zabbix_api_url: "http://127.0.0.1/zabbix/api_jsonrpc.php"
+# zabbix_admin_user: "Admin"
+# zabbix_admin_password: "set-me"

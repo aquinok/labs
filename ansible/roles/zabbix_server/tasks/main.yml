@@ -1,0 +1,54 @@
+---
+- name: Apt update
+  become: true
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Docker + docker-compose + python deps
+  become: true
+  apt:
+    name:
+      - docker.io
+      - docker-compose
+      - python3
+      - python3-pip
+      - python3-docker
+      - python3-requests
+    state: present
+
+- name: Ensure docker service enabled/running
+  become: true
+  systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Create Zabbix compose directory
+  become: true
+  file:
+    path: "{{ zabbix_compose_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Write docker-compose.yml
+  become: true
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ zabbix_compose_dir }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Bring up Zabbix stack (docker-compose)
+  become: true
+  command: docker-compose up -d
+  args:
+    chdir: "{{ zabbix_compose_dir }}"
+
+- name: Wait for Zabbix frontend to respond
+  uri:
+    url: "http://127.0.0.1/zabbix/"
+    status_code: [200, 302]
+  register: zbx_web
+  retries: 60
+  delay: 5
+  until: zbx_web.status in [200, 302]

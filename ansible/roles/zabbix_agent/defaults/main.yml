@@ -1,0 +1,4 @@
+---
+zabbix_agent_server: "{{ zabbix_server_private_ip | default('127.0.0.1') }}"
+zabbix_agent_serveractive: "{{ zabbix_server_private_ip | default('127.0.0.1') }}"
+zabbix_agent_hostname: "{{ inventory_hostname }}"

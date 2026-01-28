@@ -1,0 +1,5 @@
+tls_domain: "aquinok.net"
+tls_staging_dir: "{{ lookup('env','HOME') }}/.labs-certs/{{ tls_domain }}"
+vault_tls_dir: "/opt/vault/tls"
+vault_user: "root"
+vault_group: "root"

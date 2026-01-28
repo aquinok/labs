@@ -1,0 +1,136 @@
+---
+- name: Apt update
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+# Use Docker CE + compose plugin (what you installed manually)
+- name: Install packages required for Docker repo
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: Ensure /etc/apt/keyrings exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Install Docker GPG key (dearmored)
+  shell: |
+    set -e
+    test -f /etc/apt/keyrings/docker.gpg && exit 0
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  args:
+    executable: /bin/bash
+
+- name: Add Docker apt repo
+  shell: |
+    set -e
+    . /etc/os-release
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
+  args:
+    executable: /bin/bash
+
+- name: Apt update after Docker repo
+  apt:
+    update_cache: true
+
+- name: Install Docker CE + compose plugin
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+
+- name: Ensure docker service enabled and started
+  systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Create Zabbix compose directory
+  file:
+    path: "{{ zabbix_compose_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Create MySQL data dir
+  file:
+    path: "{{ zabbix_compose_dir }}/mysql"
+    state: directory
+    mode: "0755"
+
+- name: Render docker-compose.yml
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ zabbix_compose_dir }}/docker-compose.yml"
+    mode: "0644"
+
+# 1) Bring up DB only
+- name: Start DB container only
+  shell: |
+    set -e
+    cd {{ zabbix_compose_dir }}
+    docker compose up -d db
+  args:
+    executable: /bin/bash
+
+# 2) Wait for MySQL to be ready
+- name: Wait for MySQL to answer
+  shell: |
+    set -e
+    until docker exec {{ zabbix_db_container }} mysqladmin -uroot -p{{ zabbix_db_root_pass }} ping --silent; do
+      sleep 2
+    done
+  args:
+    executable: /bin/bash
+
+# 3) Check whether users table exists + has rows
+- name: Check users table row count
+  shell: |
+    set -e
+    docker exec {{ zabbix_db_container }} mysql -uroot -p{{ zabbix_db_root_pass }} -Nse \
+      "USE {{ zabbix_db_name }}; SELECT COUNT(*) FROM users;" 2>/dev/null || echo "__MISSING__"
+  args:
+    executable: /bin/bash
+  register: zbx_users_count
+  changed_when: false
+
+# 4) Bootstrap schema if missing or empty
+- name: Bootstrap Zabbix schema (create.sql.gz) if users table missing/empty
+  shell: |
+    set -e
+    docker run --rm --user 0:0 --entrypoint sh {{ zabbix_server_image }} -lc \
+      "gzip -dc /usr/share/doc/zabbix-server-mysql/create.sql.gz" \
+    | docker exec -i {{ zabbix_db_container }} mysql -uroot -p{{ zabbix_db_root_pass }} {{ zabbix_db_name }}
+  args:
+    executable: /bin/bash
+  when: zbx_users_count.stdout in ["__MISSING__", "0"]
+
+# 5) Bring up full stack
+- name: Start full Zabbix stack
+  shell: |
+    set -e
+    cd {{ zabbix_compose_dir }}
+    docker compose up -d
+  args:
+    executable: /bin/bash
+
+# 6) Quick health check locally
+- name: Wait for Zabbix UI HTTP to respond on localhost
+  uri:
+    url: "http://127.0.0.1:{{ zabbix_http_port }}/"
+    status_code: [200, 301, 302]
+  register: zbx_web
+  retries: 60
+  delay: 5
+  until: zbx_web.status in [200, 301, 302]
+
