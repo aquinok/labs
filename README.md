@@ -120,7 +120,37 @@ make cis
 This will: - Ensure Terraform is initialized - Generate inventory - Run
 CIS hardening across all nodes
 
-------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------
+
+## Install TLS Certificates (Vault Prep)
+
+This installs a **wildcard TLS certificate** (for `*.aquinok.net`) onto
+all lab nodes under:
+
+    /opt/vault/tls
+
+### Assumptions
+
+- Wildcard cert is generated manually on the **local machine** using certbot
+- Cert files exist locally at:
+
+        /etc/letsencrypt/live/aquinok.net/fullchain.pem
+        /etc/letsencrypt/live/aquinok.net/privkey.pem
+
+- Remote nodes require a **real sudo password**
+- That password is stored in **AWS Secrets Manager**
+
+### What this does
+
+1. Stages the TLS certs locally into a user-readable directory  
+   (`~/.labs-certs/aquinok.net`)
+2. Retrieves the remote sudo password from AWS Secrets Manager
+3. Uses Ansible to securely copy the certs to all Vault nodes
+
+### Run
+
+```bash
+make tls-install
 
 ## Tear Down the Lab
 
@@ -141,7 +171,7 @@ make clean-backend
 
 ## Full Happy Path (3-node lab)
 
-``` bash
+```bash
 make bootstrap-up
 
 # (equivalent)
@@ -150,9 +180,10 @@ make bootstrap-up
 
 make tf-init
 make up NODES=3
+make inventory
 make cis
+make tls-install
 make down
-```
 
 ------------------------------------------------------------------------
 
