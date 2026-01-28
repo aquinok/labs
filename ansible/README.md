@@ -16,3 +16,28 @@ sudo apt update
 sudo apt install -y ansible
 ansible --version
 ```
+
+
+## TLS Install (wildcard *.aquinok.net)
+
+This installs `fullchain.pem` and `privkey.pem` **from the control machine**
+to all lab nodes under `/opt/vault/tls/`.
+
+Default source paths (override via extra-vars):
+
+- `/etc/letsencrypt/live/aquinok.net/fullchain.pem`
+- `/etc/letsencrypt/live/aquinok.net/privkey.pem`
+
+Run via Make:
+
+```bash
+make tls-install
+```
+
+Or directly:
+
+```bash
+ansible-playbook -i ansible/inventories/lab/hosts.yml ansible/playbooks/tls-install.yml \
+  -e vault_tls_fullchain_src=/path/to/fullchain.pem \
+  -e vault_tls_privkey_src=/path/to/privkey.pem
+```

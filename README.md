@@ -61,8 +61,11 @@ table).\
 You only do this once unless you intentionally destroy it.
 
 ``` bash
-make bootstrap-init
-make bootstrap-apply
+make bootstrap-up
+
+# (equivalent)
+# make bootstrap-init
+# make bootstrap-apply
 ```
 
 ------------------------------------------------------------------------
@@ -139,8 +142,11 @@ make clean-backend
 ## Full Happy Path (3-node lab)
 
 ``` bash
-make bootstrap-init
-make bootstrap-apply
+make bootstrap-up
+
+# (equivalent)
+# make bootstrap-init
+# make bootstrap-apply
 
 make tf-init
 make up NODES=3

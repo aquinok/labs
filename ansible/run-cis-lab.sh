@@ -5,6 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Ensure Ansible finds repo-local roles/config regardless of cwd
+export ANSIBLE_CONFIG="${REPO_ROOT}/ansible/ansible.cfg"
+export ANSIBLE_ROLES_PATH="${REPO_ROOT}/ansible/roles:${HOME}/.ansible/roles:/usr/share/ansible/roles"
+
 TF_DIR="${TF_DIR:-${REPO_ROOT}/terraform/envs/lab/us-east-1}"
 INV="${INV:-${REPO_ROOT}/ansible/inventories/lab/hosts.yml}"
 PB="${PB:-${REPO_ROOT}/ansible/playbooks/ubuntu24-cis.yml}"

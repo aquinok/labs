@@ -1,0 +1,6 @@
+---
+- name: Install wildcard TLS for Vault lab nodes
+  hosts: vault
+  become: true
+  roles:
+    - role: vault_tls_install
