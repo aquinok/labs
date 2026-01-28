@@ -6,6 +6,10 @@ output "public_dns" {
   value = [for i in aws_instance.this : i.public_dns]
 }
 
+output "private_ips" {
+  value = [for i in aws_instance.this : i.private_ip]
+}
+
 output "instance_ids" {
   value = [for i in aws_instance.this : i.id]
 }

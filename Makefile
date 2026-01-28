@@ -17,6 +17,7 @@ STAGED_FULLCHAIN ?= $(CERT_STAGE_DIR)/fullchain.pem
 STAGED_PRIVKEY ?= $(CERT_STAGE_DIR)/privkey.pem
 
 SUDO_SECRET_ID ?= lab/ubuntu-password
+ZABBIX_ADMIN_SECRET_ID ?= lab/zabbix-admin
 
 # Accept NODE as an alias for NODES (common typo)
 ifneq ($(strip $(NODE)),)
@@ -36,6 +37,9 @@ CIS_RUNNER     := $(ANSIBLE_DIR)/run-cis-lab.sh
 
 
 TLS_PLAYBOOK := $(ANSIBLE_DIR)/playbooks/tls-install.yml
+ZABBIX_INSTALL_PLAYBOOK := $(ANSIBLE_DIR)/playbooks/zabbix-install.yml
+ZABBIX_AGENT_PLAYBOOK := $(ANSIBLE_DIR)/playbooks/zabbix-agent.yml
+ZABBIX_REGISTER_PLAYBOOK := $(ANSIBLE_DIR)/playbooks/zabbix-register.yml
 CERT_DIR     ?= /etc/letsencrypt/live/aquinok.net
 FULLCHAIN    ?= $(CERT_DIR)/fullchain.pem
 PRIVKEY      ?= $(CERT_DIR)/privkey.pem
@@ -168,6 +172,45 @@ tls-install: inventory tls-stage ## Install wildcard TLS certs to all nodes (/op
 	    -e ansible_become_password="$$LAB_SUDO_PASS" \
 	    -e vault_tls_fullchain_src="$(STAGED_FULLCHAIN)" \
 	    -e vault_tls_privkey_src="$(STAGED_PRIVKEY)"
+
+.PHONY: galaxy
+galaxy: ## Install Ansible roles/collections from ansible/requirements.yml
+	@ansible-galaxy install -r "$(ANSIBLE_DIR)/requirements.yml"
+	@ansible-galaxy collection install -r "$(ANSIBLE_DIR)/requirements.yml"
+
+.PHONY: zabbix-install
+zabbix-install: inventory galaxy ## Install Zabbix on the zabbix node (Docker)
+	@echo "[+] Pulling remote sudo password from Secrets Manager: $(SUDO_SECRET_ID)"
+	@LAB_SUDO_PASS="$$(aws secretsmanager get-secret-value --secret-id "$(SUDO_SECRET_ID)" --query SecretString --output text)" ; \
+	  test -n "$$LAB_SUDO_PASS" || (echo "ERROR: empty sudo password from secret $(SUDO_SECRET_ID)" >&2; exit 1) ; \
+	  ZABBIX_SECRET_JSON="$$(aws secretsmanager get-secret-value --secret-id "$(ZABBIX_ADMIN_SECRET_ID)" --query SecretString --output text)" ; \
+	  ZABBIX_ADMIN_PASSWORD="$$(echo "$$ZABBIX_SECRET_JSON" | jq -r '.password')" ; \
+	  test -n "$$ZABBIX_ADMIN_PASSWORD" || (echo "ERROR: empty zabbix admin password from secret $(ZABBIX_ADMIN_SECRET_ID)" >&2; exit 1) ; \
+	  ANSIBLE_CONFIG="$(PWD)/$(ANSIBLE_DIR)/ansible.cfg" \
+	  ansible-playbook -i "$(ANSIBLE_DIR)/inventories/$(ENV)/hosts.yml" "$(ZABBIX_INSTALL_PLAYBOOK)" --limit zabbix \
+	    -e ansible_become_password="$$LAB_SUDO_PASS" \
+	    -e zabbix_admin_password="$$ZABBIX_ADMIN_PASSWORD"
+
+.PHONY: zabbix-agent
+zabbix-agent: inventory galaxy ## Install Zabbix Agent2 on vault nodes
+	@echo "[+] Pulling remote sudo password from Secrets Manager: $(SUDO_SECRET_ID)"
+	@LAB_SUDO_PASS="$$(aws secretsmanager get-secret-value --secret-id "$(SUDO_SECRET_ID)" --query SecretString --output text)" ; \
+	  test -n "$$LAB_SUDO_PASS" || (echo "ERROR: empty sudo password from secret $(SUDO_SECRET_ID)" >&2; exit 1) ; \
+	  ANSIBLE_CONFIG="$(PWD)/$(ANSIBLE_DIR)/ansible.cfg" \
+	  ansible-playbook -i "$(ANSIBLE_DIR)/inventories/$(ENV)/hosts.yml" "$(ZABBIX_AGENT_PLAYBOOK)" --limit vault \
+	    -e ansible_become_password="$$LAB_SUDO_PASS"
+
+.PHONY: zabbix-register
+zabbix-register: inventory galaxy ## Register vault nodes in Zabbix via API
+	@ZABBIX_SECRET_JSON="$$(aws secretsmanager get-secret-value --secret-id "$(ZABBIX_ADMIN_SECRET_ID)" --query SecretString --output text)" ; \
+	  ZABBIX_ADMIN_PASSWORD="$$(echo "$$ZABBIX_SECRET_JSON" | jq -r '.password')" ; \
+	  test -n "$$ZABBIX_ADMIN_PASSWORD" || (echo "ERROR: empty zabbix admin password from secret $(ZABBIX_ADMIN_SECRET_ID)" >&2; exit 1) ; \
+	  ANSIBLE_CONFIG="$(PWD)/$(ANSIBLE_DIR)/ansible.cfg" \
+	  ansible-playbook -i "$(ANSIBLE_DIR)/inventories/$(ENV)/hosts.yml" "$(ZABBIX_REGISTER_PLAYBOOK)" \
+	    -e zabbix_admin_password="$$ZABBIX_ADMIN_PASSWORD"
+
+.PHONY: observability
+observability: zabbix-install zabbix-agent zabbix-register ## Install Zabbix + agents + register hosts
 
 .PHONY: clean-inventory
 clean-inventory: ## Remove generated inventory

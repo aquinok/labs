@@ -1,0 +1,8 @@
+---
+- name: Install Zabbix (server + web) via Docker Compose (with DB bootstrap)
+  hosts: zabbix
+  become: true
+  gather_facts: true
+
+  roles:
+    - ../roles/zabbix_docker

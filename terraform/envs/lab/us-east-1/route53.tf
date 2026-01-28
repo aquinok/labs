@@ -40,10 +40,22 @@ resource "aws_route53_record" "vault_rr" {
   records = module.ec2.public_ips
 }
 
+resource "aws_route53_record" "zabbix_a" {
+  zone_id = data.aws_route53_zone.public.zone_id
+  name    = "zabbix.${var.domain_name}"
+  type    = "A"
+  ttl     = 60
+  records = [module.zabbix.public_ips[0]]
+}
+
 output "node_fqdns" {
   value = [for n in module.ec2.names : "${n}.${var.domain_name}"]
 }
 
 output "vault_fqdn" {
   value = "vault.${var.domain_name}"
+}
+
+output "zabbix_fqdn" {
+  value = "zabbix.${var.domain_name}"
 }

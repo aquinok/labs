@@ -1,6 +1,6 @@
 ---
 - name: CIS harden Ubuntu 24.04
-  hosts: vault
+  hosts: all
   become: true
   vars_files:
     - ../group_vars/all/ubuntu24_cis.yml
