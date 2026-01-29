@@ -1,47 +1,29 @@
 ---
-- name: Apt update
-  apt:
-    update_cache: true
-    cache_valid_time: 3600
+# roles/zabbix_docker/tasks/main.yml
 
-# Use Docker CE + compose plugin (what you installed manually)
-- name: Install packages required for Docker repo
-  apt:
+- name: Install prerequisite packages
+  ansible.builtin.apt:
     name:
       - ca-certificates
       - curl
       - gnupg
+      - lsb-release
     state: present
-
-- name: Ensure /etc/apt/keyrings exists
-  file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Install Docker GPG key (dearmored)
-  shell: |
-    set -e
-    test -f /etc/apt/keyrings/docker.gpg && exit 0
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-  args:
-    executable: /bin/bash
-
-- name: Add Docker apt repo
-  shell: |
-    set -e
-    . /etc/os-release
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
-  args:
-    executable: /bin/bash
-
-- name: Apt update after Docker repo
-  apt:
     update_cache: true
 
-- name: Install Docker CE + compose plugin
-  apt:
+- name: Add Docker GPG key
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+
+- name: Install Docker CE and Compose plugin (v2)
+  ansible.builtin.apt:
     name:
       - docker-ce
       - docker-ce-cli
@@ -49,88 +31,195 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
+    update_cache: true
 
-- name: Ensure docker service enabled and started
-  systemd:
+- name: Ensure Docker daemon is enabled and running
+  ansible.builtin.systemd:
     name: docker
     enabled: true
     state: started
 
-- name: Create Zabbix compose directory
-  file:
-    path: "{{ zabbix_compose_dir }}"
+- name: Create Zabbix stack directory
+  ansible.builtin.file:
+    path: "{{ zabbix_stack_dir }}"
     state: directory
     mode: "0755"
 
-- name: Create MySQL data dir
-  file:
-    path: "{{ zabbix_compose_dir }}/mysql"
+- name: Create schema staging directory
+  ansible.builtin.file:
+    path: "{{ zabbix_stack_dir }}/schema"
     state: directory
     mode: "0755"
+
+- name: Create nginx config directory (for proxy container)
+  ansible.builtin.file:
+    path: "{{ zabbix_stack_dir }}/nginx"
+    state: directory
+    mode: "0755"
+  when: zabbix_enable_proxy | bool
+
+- name: Ensure TLS directory exists on target (proxy)
+  ansible.builtin.file:
+    path: "{{ zabbix_tls_target_dir }}"
+    state: directory
+    mode: "0755"
+  when: zabbix_enable_proxy | bool
+
+# NOTE: copy always reads from control machine and writes to remote
+# Do NOT delegate_to localhost.
+- name: Push wildcard fullchain.pem from control machine to target
+  ansible.builtin.copy:
+    src: "{{ zabbix_tls_local_fullchain }}"
+    dest: "{{ zabbix_tls_cert_path }}"
+    mode: "0644"
+  when:
+    - zabbix_enable_proxy | bool
+    - zabbix_tls_ship_from_control | bool
+
+- name: Push wildcard privkey.pem from control machine to target
+  ansible.builtin.copy:
+    src: "{{ zabbix_tls_local_privkey }}"
+    dest: "{{ zabbix_tls_key_path }}"
+    mode: "0600"
+  when:
+    - zabbix_enable_proxy | bool
+    - zabbix_tls_ship_from_control | bool
+
+- name: Render nginx.conf (for proxy container)
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: "{{ zabbix_stack_dir }}/nginx/nginx.conf"
+    mode: "0644"
+  when: zabbix_enable_proxy | bool
 
 - name: Render docker-compose.yml
-  template:
+  ansible.builtin.template:
     src: docker-compose.yml.j2
-    dest: "{{ zabbix_compose_dir }}/docker-compose.yml"
+    dest: "{{ zabbix_compose_file }}"
     mode: "0644"
 
-# 1) Bring up DB only
-- name: Start DB container only
-  shell: |
-    set -e
-    cd {{ zabbix_compose_dir }}
-    docker compose up -d db
-  args:
-    executable: /bin/bash
+# --- DB bootstrap sequence ---
 
-# 2) Wait for MySQL to be ready
-- name: Wait for MySQL to answer
-  shell: |
-    set -e
-    until docker exec {{ zabbix_db_container }} mysqladmin -uroot -p{{ zabbix_db_root_pass }} ping --silent; do
-      sleep 2
-    done
-  args:
-    executable: /bin/bash
+- name: Start DB only
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" up -d db
+  changed_when: true
 
-# 3) Check whether users table exists + has rows
-- name: Check users table row count
-  shell: |
-    set -e
-    docker exec {{ zabbix_db_container }} mysql -uroot -p{{ zabbix_db_root_pass }} -Nse \
-      "USE {{ zabbix_db_name }}; SELECT COUNT(*) FROM users;" 2>/dev/null || echo "__MISSING__"
-  args:
-    executable: /bin/bash
-  register: zbx_users_count
+- name: Wait for MySQL to be ready inside DB container
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" exec -T db
+      mysqladmin ping
+      -uroot -p"{{ zabbix_db_root_password }}"
+      --silent
+  register: mysql_ping
+  retries: "{{ zabbix_mysql_ping_retries | default(60) }}"
+  delay: "{{ zabbix_mysql_ping_delay | default(2) }}"
+  until: mysql_ping.rc == 0
   changed_when: false
 
-# 4) Bootstrap schema if missing or empty
-- name: Bootstrap Zabbix schema (create.sql.gz) if users table missing/empty
-  shell: |
-    set -e
-    docker run --rm --user 0:0 --entrypoint sh {{ zabbix_server_image }} -lc \
-      "gzip -dc /usr/share/doc/zabbix-server-mysql/create.sql.gz" \
-    | docker exec -i {{ zabbix_db_container }} mysql -uroot -p{{ zabbix_db_root_pass }} {{ zabbix_db_name }}
+- name: Pull schema image (so schema extraction is stable)
+  ansible.builtin.command:
+    cmd: docker pull "{{ zabbix_schema_image }}"
+  changed_when: false
+
+- name: Extract create.sql.gz from schema image to host
+  ansible.builtin.shell: |
+    set -euo pipefail
+    CID="$(docker create "{{ zabbix_schema_image }}")"
+    docker cp "${CID}:{{ zabbix_schema_file_in_image }}" "{{ zabbix_stack_dir }}/schema/create.sql.gz"
+    docker rm -f "${CID}" >/dev/null
+    gzip -dc "{{ zabbix_stack_dir }}/schema/create.sql.gz" > "{{ zabbix_stack_dir }}/schema/create.sql"
   args:
     executable: /bin/bash
-  when: zbx_users_count.stdout in ["__MISSING__", "0"]
+    creates: "{{ zabbix_stack_dir }}/schema/create.sql"
+  changed_when: true
 
-# 5) Bring up full stack
-- name: Start full Zabbix stack
-  shell: |
-    set -e
-    cd {{ zabbix_compose_dir }}
-    docker compose up -d
+- name: Check if Zabbix users table exists
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" exec -T db
+      mysql -h 127.0.0.1
+      -uroot -p"{{ zabbix_db_root_password }}"
+      -N -B
+      "{{ zabbix_db_name }}"
+      -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{{ zabbix_db_name }}' AND table_name='users';"
+  register: users_table_exists
+  changed_when: false
+
+- name: Check users row count (if table exists)
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" exec -T db
+      mysql -h 127.0.0.1
+      -uroot -p"{{ zabbix_db_root_password }}"
+      -N -B
+      "{{ zabbix_db_name }}"
+      -e "SELECT COUNT(*) FROM users;"
+  register: users_row_count
+  changed_when: false
+  when: users_table_exists.stdout | trim == "1"
+
+- name: Import Zabbix schema from host file (only if needed)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker compose -f "{{ zabbix_compose_file }}" exec -T db \
+      mysql -h 127.0.0.1 -uroot -p"{{ zabbix_db_root_password }}" "{{ zabbix_db_name }}" \
+      < "{{ zabbix_stack_dir }}/schema/create.sql"
   args:
     executable: /bin/bash
+  when: users_table_exists.stdout | trim != "1" or (users_row_count.stdout | default("0") | trim | int) == 0
+  changed_when: true
 
-# 6) Quick health check locally
-- name: Wait for Zabbix UI HTTP to respond on localhost
-  uri:
-    url: "http://127.0.0.1:{{ zabbix_http_port }}/"
-    status_code: [200, 301, 302]
-  register: zbx_web
-  retries: 60
-  delay: 5
-  until: zbx_web.status in [200, 301, 302]
+- name: Verify users/config rows after import
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" exec -T db
+      mysql -h 127.0.0.1
+      -uroot -p"{{ zabbix_db_root_password }}"
+      -N -B
+      "{{ zabbix_db_name }}"
+      -e "SELECT (SELECT COUNT(*) FROM users) AS users_count, (SELECT COUNT(*) FROM config) AS config_count;"
+  register: post_import_counts
+  changed_when: false
 
+- name: Fail if DB still looks unbootstrapped
+  ansible.builtin.fail:
+    msg: "Zabbix DB still not bootstrapped: {{ post_import_counts.stdout }}"
+  when: >
+    (post_import_counts.stdout is not defined) or
+    ((post_import_counts.stdout.split()[0] | int) == 0) or
+    ((post_import_counts.stdout.split()[1] | int) == 0)
+
+# --- Bring up the rest of the stack ---
+
+- name: Start Zabbix services (server + web + proxy)
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" up -d
+  changed_when: true
+
+- name: Wait for Zabbix web container healthcheck
+  ansible.builtin.command:
+    cmd: >
+      docker compose -f "{{ zabbix_compose_file }}" ps --format json
+  register: compose_ps_json
+  retries: "{{ zabbix_http_wait_retries | default(60) }}"
+  delay: "{{ zabbix_http_wait_delay | default(2) }}"
+  until: compose_ps_json.rc == 0
+  changed_when: false
+
+- name: Wait for Zabbix UI to respond (HTTPS via FQDN) from control machine
+  ansible.builtin.uri:
+    url: "https://{{ zabbix_fqdn }}/"
+    status_code: [200, 302]
+    return_content: false
+    validate_certs: true
+  delegate_to: localhost
+  become: false
+  register: zbx_ui_https_check
+  retries: "{{ zabbix_http_wait_retries | default(60) }}"
+  delay: "{{ zabbix_http_wait_delay | default(2) }}"
+  until: zbx_ui_https_check.status is defined
+  changed_when: false

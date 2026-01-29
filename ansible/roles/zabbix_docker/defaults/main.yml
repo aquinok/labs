@@ -1,16 +1,62 @@
 ---
-zabbix_compose_dir: /opt/zabbix
-zabbix_db_container: zabbix-db-1
+# roles/zabbix_docker/defaults/main.yml
+
+# Where the stack lives on the target
+zabbix_stack_dir: /opt/zabbix
+zabbix_compose_file: "{{ zabbix_stack_dir }}/docker-compose.yml"
+
+# FQDN for the Zabbix UI (used by nginx server_name and redirects)
+zabbix_fqdn: "zabbix.aquinok.net"
+
+# Images
+zabbix_db_image: "mysql:8.0"
 zabbix_server_image: "zabbix/zabbix-server-mysql:6.4-ubuntu-latest"
 zabbix_web_image: "zabbix/zabbix-web-nginx-mysql:6.4-ubuntu-latest"
-zabbix_mysql_image: "mysql:8.0"
 
-zabbix_db_name: zabbix
-zabbix_db_user: zabbix
-zabbix_db_pass: zabbix
-zabbix_db_root_pass: zabbix
+# DB settings
+zabbix_db_name: "zabbix"
+zabbix_db_user: "zabbix"
+zabbix_db_password: "zabbix_pwd"
+zabbix_db_root_password: "root_pwd"
 
+# Schema extraction source (inside server image)
+zabbix_schema_image: "{{ zabbix_server_image }}"
+zabbix_schema_file_in_image: "/usr/share/doc/zabbix-server-mysql/create.sql.gz"
+
+# Timezone for PHP
+zabbix_php_tz: "America/Chicago"
+
+# Proxy settings (TLS termination)
+zabbix_enable_proxy: true
 zabbix_http_port: 80
+zabbix_https_port: 443
+
+# TLS shipping from control machine (your laptop) to target
+zabbix_tls_ship_from_control: true
+
+# Local (control machine) LE paths (your laptop)
+zabbix_tls_local_fullchain: "/etc/letsencrypt/live/aquinok.net/fullchain.pem"
+zabbix_tls_local_privkey: "/etc/letsencrypt/live/aquinok.net/privkey.pem"
+
+# Target paths (server)
+zabbix_tls_target_dir: "/etc/zabbix/tls"
+zabbix_tls_cert_path: "{{ zabbix_tls_target_dir }}/fullchain.pem"
+zabbix_tls_key_path: "{{ zabbix_tls_target_dir }}/privkey.pem"
+
+# Wait tuning
+zabbix_mysql_ping_retries: 60
+zabbix_mysql_ping_delay: 2
+
+zabbix_http_wait_retries: 60
+zabbix_http_wait_delay: 2
+
+# If you ever want to expose web directly (usually false when proxy is on)
+zabbix_expose_web_direct: false
+
+# Zabbix server listener (for agents)
 zabbix_server_port: 10051
 
-zabbix_php_tz: "America/Chicago"
+# Zabbix web internal port (container listens on 8080)
+zabbix_web_port: 8080
+
+zabbix_proxy_image: "nginx:alpine"

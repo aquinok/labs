@@ -1,41 +1,80 @@
+# roles/zabbix_docker/templates/docker-compose.yml.j2
+
 services:
   db:
-    image: {{ zabbix_mysql_image }}
-    restart: unless-stopped
+    image: "{{ zabbix_db_image }}"
+    container_name: zabbix-db
     environment:
-      MYSQL_DATABASE: {{ zabbix_db_name }}
-      MYSQL_USER: {{ zabbix_db_user }}
-      MYSQL_PASSWORD: {{ zabbix_db_pass }}
-      MYSQL_ROOT_PASSWORD: {{ zabbix_db_root_pass }}
-    command: ["--character-set-server=utf8mb4","--collation-server=utf8mb4_bin"]
+      MYSQL_DATABASE: "{{ zabbix_db_name }}"
+      MYSQL_USER: "{{ zabbix_db_user }}"
+      MYSQL_PASSWORD: "{{ zabbix_db_password }}"
+      MYSQL_ROOT_PASSWORD: "{{ zabbix_db_root_password }}"
     volumes:
-      - "{{ zabbix_compose_dir }}/mysql:/var/lib/mysql"
+      - zabbix_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -uroot -p{{ zabbix_db_root_password }} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - zabbix_net
 
   zabbix-server:
     image: "{{ zabbix_server_image }}"
-    restart: unless-stopped
+    container_name: zabbix-server
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DB_SERVER_HOST: db
-      MYSQL_DATABASE: {{ zabbix_db_name }}
-      MYSQL_USER: {{ zabbix_db_user }}
-      MYSQL_PASSWORD: {{ zabbix_db_pass }}
+      MYSQL_DATABASE: "{{ zabbix_db_name }}"
+      MYSQL_USER: "{{ zabbix_db_user }}"
+      MYSQL_PASSWORD: "{{ zabbix_db_password }}"
     ports:
       - "{{ zabbix_server_port }}:10051"
+    networks:
+      - zabbix_net
 
   web:
     image: "{{ zabbix_web_image }}"
-    restart: unless-stopped
+    container_name: zabbix-web
     depends_on:
-      - db
-      - zabbix-server
+      db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
     environment:
       DB_SERVER_HOST: db
-      MYSQL_DATABASE: {{ zabbix_db_name }}
-      MYSQL_USER: {{ zabbix_db_user }}
-      MYSQL_PASSWORD: {{ zabbix_db_pass }}
+      MYSQL_DATABASE: "{{ zabbix_db_name }}"
+      MYSQL_USER: "{{ zabbix_db_user }}"
+      MYSQL_PASSWORD: "{{ zabbix_db_password }}"
       ZBX_SERVER_HOST: zabbix-server
       PHP_TZ: "{{ zabbix_php_tz }}"
+    expose:
+      - "8080"
+      - "8443"
+    networks:
+      - zabbix_net
+
+  proxy:
+    image: "{{ zabbix_proxy_image }}"
+    container_name: zabbix-proxy
+    depends_on:
+      web:
+        condition: service_healthy
     ports:
-      - "{{ zabbix_http_port }}:8080"
+      - "{{ zabbix_http_port }}:80"
+      - "{{ zabbix_https_port }}:443"
+    volumes:
+      - "{{ zabbix_stack_dir }}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+      - "{{ zabbix_tls_target_dir }}:{{ zabbix_tls_target_dir }}:ro"
+    networks:
+      - zabbix_net
+
+volumes:
+  zabbix_db_data:
+
+networks:
+  zabbix_net:
+    name: zabbix_net
+    driver: bridge

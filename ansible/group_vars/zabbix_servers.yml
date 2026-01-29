@@ -1,0 +1,27 @@
+---
+# group_vars/zabbix_servers.yml
+
+# Enable TLS proxy
+zabbix_enable_proxy: true
+zabbix_expose_web_direct: false
+
+zabbix_external_fqdn: "zabbix.aquinok.net"
+
+# Ship wildcard cert from your LOCAL MACHINE to the servers
+zabbix_tls_ship_from_control: true
+
+# These are on your laptop
+zabbix_tls_local_fullchain: "/etc/letsencrypt/live/aquinok.net/fullchain.pem"
+zabbix_tls_local_privkey:  "/etc/letsencrypt/live/aquinok.net/privkey.pem"
+
+# These will be created on the target zabbix server
+zabbix_tls_target_dir: "/etc/zabbix/tls"
+zabbix_tls_cert_path: "/etc/zabbix/tls/fullchain.pem"
+zabbix_tls_key_path:  "/etc/zabbix/tls/privkey.pem"
+
+# Make sure your DB secrets match your compose expectations
+zabbix_db_name: zabbix
+zabbix_db_user: zabbix
+zabbix_db_password: zabbix_pwd
+zabbix_db_root_password: root_pwd
+

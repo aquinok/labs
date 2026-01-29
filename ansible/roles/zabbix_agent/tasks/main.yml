@@ -5,6 +5,32 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: Install prerequisites for Zabbix repo
+  become: true
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+  when: zabbix_agent_use_official_repo | bool
+
+- name: Add Zabbix apt repo (official)
+  become: true
+  shell: |
+    set -e
+    . /etc/os-release
+    ZBXV="{{ zabbix_agent_zabbix_major }}"
+    DEB="zabbix-release_${ZBXV}-1+ubuntu${VERSION_ID}_all.deb"
+    URL="https://repo.zabbix.com/zabbix/${ZBXV}/ubuntu/pool/main/z/zabbix-release/${DEB}"
+    curl -fsSL "$URL" -o "/tmp/${DEB}"
+    dpkg -i "/tmp/${DEB}"
+    rm -f "/tmp/${DEB}"
+    apt-get update -y
+  args:
+    executable: /bin/bash
+  when: zabbix_agent_use_official_repo | bool
+
 - name: Install zabbix-agent2
   become: true
   apt:
@@ -28,3 +54,21 @@
     name: zabbix-agent2
     enabled: true
     state: restarted
+
+- name: Check connectivity to Zabbix server port 10051 (from agent host)
+  become: true
+  shell: |
+    set -e
+    hostport="{{ zabbix_agent_serveractive }}"
+    host="${hostport%%:*}"
+    port="${hostport##*:}"
+    timeout 3 bash -lc "cat < /dev/null > /dev/tcp/${host}/${port}" && echo OK || echo FAIL
+  args:
+    executable: /bin/bash
+  register: zbx_agent_connectivity
+  changed_when: false
+
+- name: Warn if agent cannot reach server (active checks need outbound)
+  debug:
+    msg: "WARNING: Agent could not connect to {{ zabbix_agent_serveractive }} (got: {{ zbx_agent_connectivity.stdout }}). Check routing / firewall / SG."
+  when: zbx_agent_connectivity.stdout != "OK"

@@ -1,4 +1,10 @@
 ---
+# If you are running active checks (recommended), set zabbix_agent_serveractive to "fqdn:10051"
+# Example: zabbix_agent_serveractive: "zabbix.aquinok.net:10051"
 zabbix_agent_server: "{{ zabbix_server_private_ip | default('127.0.0.1') }}"
-zabbix_agent_serveractive: "{{ zabbix_server_private_ip | default('127.0.0.1') }}"
+zabbix_agent_serveractive: "{{ zabbix_server_fqdn | default(zabbix_server_private_ip | default('127.0.0.1')) }}:10051"
 zabbix_agent_hostname: "{{ inventory_hostname }}"
+
+# Install from Zabbix repo (recommended to get current agent2)
+zabbix_agent_use_official_repo: true
+zabbix_agent_zabbix_major: "6.4"
