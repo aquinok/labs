@@ -1,249 +1,221 @@
-# Labs -- Terraform + Ansible (CIS Hardened)
+# Labs Infrastructure & Observability
 
-This repository provisions a **repeatable AWS lab environment** using
-Terraform, applies **CIS hardening** with Ansible, and tears everything
-down cleanly.\
-The **Makefile is the single interface** --- no manual Terraform or
-Ansible commands required.
+This repository provides a **Makefile-driven workflow** for provisioning infrastructure, configuring hosts, and deploying a production-grade **Zabbix observability stack**.
 
-------------------------------------------------------------------------
+The Makefile is the primary interface. If you remember nothing else:
 
-## Prerequisites
+> **Run things via `make`. Do not run Terraform or Ansible directly unless debugging.**
 
-You must have the following installed and available in your PATH:
+---
 
--   Terraform
--   Ansible
--   AWS CLI v2
--   SSH client
--   Python 3
+## Quick start (happy path)
 
-Verify:
+```bash
+# One-time: install Ansible roles & collections
+make galaxy
 
-``` bash
-terraform version
-ansible --version
-aws --version
-ssh -V
-python3 --version
-```
-
-------------------------------------------------------------------------
-
-## AWS Authentication
-
-You must be authenticated to AWS (env vars, profile, or SSO).
-
-Verify:
-
-``` bash
-aws sts get-caller-identity
-```
-
-------------------------------------------------------------------------
-
-## SSH Key
-
-By default the lab expects:
-
--   `~/.ssh/id_rsa`
--   `~/.ssh/id_rsa.pub`
-
-If you use a different key, override it with `SSH_KEY` when running Make
-targets.
-
-------------------------------------------------------------------------
-
-## One-Time Setup (per AWS account)
-
-This creates the **remote Terraform backend** (S3 bucket + DynamoDB lock
-table).\
-You only do this once unless you intentionally destroy it.
-
-``` bash
+# Bootstrap Terraform backend (one-time per account/region)
 make bootstrap-up
 
-# (equivalent)
-# make bootstrap-init
-# make bootstrap-apply
+# Provision infra
+make up
+
+# Install Zabbix (server + web + DB via Docker)
+make zabbix-install
+
+# Install Zabbix Agent2 on monitored nodes
+make zabbix-agent
+
+# Register hosts in Zabbix via API
+make zabbix-register
 ```
 
-------------------------------------------------------------------------
+Or, end-to-end:
 
-## Bring Up the Lab (N nodes)
-
-This initializes Terraform, generates backend configuration
-automatically, and provisions EC2 instances.
-
-``` bash
-make tf-init
-make up NODES=3
+```bash
+make observability
 ```
 
-Defaults: - ENV = lab - REGION = us-east-1 - NODES = 1 (override as
-shown above)
+---
 
-------------------------------------------------------------------------
+## Makefile concepts
 
-## Generate Ansible Inventory
+### Environment selection
 
-Inventory is **derived from Terraform outputs** (never edited manually).
+The workflow is parameterized via variables:
 
-``` bash
-make inventory
+* `ENV` – environment name (default: `lab`)
+* `REGION` – cloud region (default: `us-east-1`)
+* `NODES` – number of nodes to provision (default: `1`)
+
+Example:
+
+```bash
+make up ENV=sandbox REGION=us-west-2 NODES=3
 ```
 
-If you use a non-default SSH key:
+---
 
-``` bash
-make inventory SSH_KEY="$HOME/.ssh/mykey"
+## Zabbix observability workflow
+
+### 1. Zabbix install (server-side)
+
+```bash
+make zabbix-install
 ```
 
-This generates:
+What this does:
 
-    ansible/inventories/lab/hosts.yml
+* Targets the `zabbix` host group
+* Deploys Zabbix Server, Web UI, DB, and nginx reverse proxy via Docker
+* Configures TLS using a wildcard Let’s Encrypt cert
+* Pulls the Zabbix admin password from AWS Secrets Manager
 
-------------------------------------------------------------------------
+After completion:
 
-## Apply CIS Hardening
+* UI is available at:
 
-Runs the CIS lockdown playbook against all nodes.
+  **[https://zabbix.aquinok.net](https://zabbix.aquinok.net)**
 
--   Terraform generated a sudo password
--   Password is stored in AWS Secrets Manager
--   Ansible retrieves it at runtime for `become`
+---
 
-``` bash
-make cis
+### 2. Zabbix Agent2 install (node-side)
+
+```bash
+make zabbix-agent
 ```
 
-This will: - Ensure Terraform is initialized - Generate inventory - Run
-CIS hardening across all nodes
+What this does:
 
-------------------------------------------------------------------------------------------------------------------------------------------------
+* Installs **Zabbix Agent2** via Ansible
+* Configures agents for **active checks**
+* Starts and enables the service
 
-## Install TLS Certificates (Vault Prep)
+[x] Agents running at this point is expected
+[ ] Hosts will *not* appear in the UI yet
 
-This installs a **wildcard TLS certificate** (for `*.aquinok.net`) onto
-all lab nodes under:
+This is normal.
 
-    /opt/vault/tls
+---
 
-### Assumptions
+### 3. Zabbix host registration (API-side)
 
-- Wildcard cert is generated manually on the **local machine** using certbot
-- Cert files exist locally at:
+```bash
+make zabbix-register
+```
 
-        /etc/letsencrypt/live/aquinok.net/fullchain.pem
-        /etc/letsencrypt/live/aquinok.net/privkey.pem
+What this does:
 
-- Remote nodes require a **real sudo password**
-- That password is stored in **AWS Secrets Manager**
+* Authenticates to the Zabbix API
+* Ensures required host groups exist
+* Creates or updates hosts
+* Links templates
 
-### What this does
+**Important constraint**
 
-1. Stages the TLS certs locally into a user-readable directory  
-   (`~/.labs-certs/aquinok.net`)
-2. Retrieves the remote sudo password from AWS Secrets Manager
-3. Uses Ansible to securely copy the certs to all Vault nodes
+> The hostname **must exactly match** the agent configuration, or registration will silently fail.
 
-### Run
+---
+
+### 4. Full observability pipeline
+
+```bash
+make observability
+```
+
+Equivalent to:
+
+```bash
+make zabbix-install zabbix-agent zabbix-register
+```
+
+---
+
+## TLS handling
+
+TLS is handled explicitly and safely.
+
+### Stage certs locally (one-time per machine)
+
+```bash
+make tls-stage
+```
+
+This:
+
+* Copies wildcard certs from `/etc/letsencrypt/live/aquinok.net`
+* Stages them into `~/.labs-certs/aquinok.net`
+* Fixes ownership and permissions
+
+### Install certs on nodes
 
 ```bash
 make tls-install
 ```
 
-------------------------------------------------------------------------------------------------------------------------------------------------
+---
 
-## Tear Down the Lab
+## Terraform lifecycle
 
-Destroy all EC2 resources (remote state remains intact).
-
-``` bash
-make down
-```
-
-Optional cleanup of generated files:
-
-``` bash
-make clean-inventory
-make clean-backend
-```
-
-------------------------------------------------------------------------
-
-## Full Happy Path (3-node lab)
+### Bootstrap (one-time)
 
 ```bash
 make bootstrap-up
-
-# (equivalent)
-# make bootstrap-init
-# make bootstrap-apply
-
-make tf-init
-make up NODES=3
-make inventory
-make cis
-make tls-install
-make down
-
-------------------------------------------------------------------------
-
-## Important Notes
-
-### Do NOT routinely destroy bootstrap
-
-`make bootstrap-destroy` deletes the Terraform backend itself.\
-Only run this if you are intentionally resetting everything.
-
-### Inventory and backend files are generated
-
-These files are intentionally **not committed to git**:
-
--   `terraform/envs/**/backend.hcl`
--   `ansible/inventories/**/hosts.yml`
-
-------------------------------------------------------------------------
-
-## Troubleshooting
-
-### Backend errors
-
-If Terraform reports backend changes:
-
-``` bash
-make tf-init
 ```
 
-The Makefile automatically regenerates backend config and reinitializes
-safely.
+Creates:
 
-### SSH failures
+* Remote state S3 bucket
+* DynamoDB state lock table
 
--   Confirm your IP is allowed in `allowed_ssh_cidrs`
--   Confirm the SSH key path is correct
+### Environment lifecycle
 
-### CIS fails on sudo
+```bash
+make plan
+make up
+make down
+```
 
-Ensure: - AWS identity can read Secrets Manager -
-`secretsmanager:GetSecretValue` - `kms:Decrypt` (if using a CMK)
+Terraform init is **idempotent and guarded**. It will only re-run when the backend changes.
 
-------------------------------------------------------------------------
+---
 
-## Design Principles
+## Inventory generation
 
--   Terraform is the source of truth
--   Ansible consumes Terraform outputs
--   Inventory is derived, never hand-edited
--   CIS requires real sudo passwords (no NOPASSWD shortcuts)
--   Everything is reproducible via Make
+```bash
+make inventory
+```
 
-------------------------------------------------------------------------
+* Generates Ansible inventory from Terraform outputs
+* Output location:
 
-## Next Steps
+  `ansible/inventories/<ENV>/hosts.yml`
 
--   Add private networking
--   Convert public IPs → private IPs
--   Build Vault cluster (Raft)
--   Add TLS + retry_join
+This is automatically run by most targets.
+
+---
+
+## Ansible dependencies
+
+Install all required roles and collections with:
+
+```bash
+make galaxy
+```
+
+This installs:
+
+* Roles
+* Collections (including `community.zabbix`)
+
+Do not skip this step.
+
+---
+
+## Help
+
+List all available targets:
+
+```bash
+make help
+```
