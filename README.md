@@ -56,6 +56,19 @@ make up ENV=sandbox REGION=us-west-2 NODES=3
 
 ---
 
+#### (Pre-flight) CIS hardening
+
+```bash
+make cis
+```
+
+What this does:
+
+* Applies CIS-aligned baseline hardening to hosts
+* Safe to re-run (idempotent)
+
+---
+
 ## Zabbix observability workflow
 
 ### 1. Zabbix install (server-side)
