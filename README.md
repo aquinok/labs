@@ -91,8 +91,8 @@ What this does:
 * Configures agents for **active checks**
 * Starts and enables the service
 
-[x] Agents running at this point is expected
-[ ] Hosts will *not* appear in the UI yet
+- [x] Agents running at this point is expected
+- [ ] Hosts will *not* appear in the UI yet
 
 This is normal.
 
